@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enigma-service
+  namespace: enigma
+  labels:
+    app: enigma-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: enigma-service
+  template:
+    metadata:
+      labels:
+        app: enigma-service
+    spec:
+      containers:
+      - name: enigma
+        image: enigma:v1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080

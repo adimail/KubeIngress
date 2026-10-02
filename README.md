@@ -32,3 +32,51 @@ KubeIngress is a cloud-native, multi-tenant ingress platform built with Envoy an
 │    - Observability: Prometheus/Datadog metrics, p99 latencies  │
 └────────────────────────────────────────────────────────────────┘
 ```
+
+Here is a minimal, command-focused `README.md` for Phase 1:
+
+## Phase 1: Local Cluster & Tenant Workloads
+
+### 1. Create Cluster
+```bash
+kind create cluster --name kubeingress --config deploy/kind/kind-cluster.yaml
+```
+
+### 2. Build & Sideload Images
+```bash
+# Build
+docker build -t gallery:v1 ./apps/gallery
+docker build -t enigma:v1 ./apps/enigma
+
+# Load into Kind
+kind load docker-image gallery:v1 --name kubeingress
+kind load docker-image enigma:v1 --name kubeingress
+```
+
+### 3. Deploy Tenants
+```bash
+# Gallery
+kubectl apply -f deploy/tenants/gallery/namespace.yaml
+kubectl apply -f deploy/tenants/gallery/
+
+# Enigma
+kubectl apply -f deploy/tenants/enigma/namespace.yaml
+kubectl apply -f deploy/tenants/enigma/
+```
+
+### 4. Verify Workloads
+```bash
+# Check status
+kubectl get pods -n gallery
+kubectl get pods -n enigma
+
+# Test Gallery (HTML + Pod Identity)
+kubectl run test-pod --rm -it --image=curlimages/curl --restart=Never -- \
+  curl -s http://gallery-service.gallery.svc.cluster.local | grep -A 3 "identity-badge"
+
+# Test Enigma (POST Hash API)
+kubectl run test-pod --rm -it --image=curlimages/curl --restart=Never -- \
+  curl -s -X POST http://enigma-service.enigma.svc.cluster.local \
+  -H "Content-Type: application/json" \
+  -d '{"input": "kubeingress"}'
+```
