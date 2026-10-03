@@ -80,3 +80,48 @@ kubectl run test-pod --rm -it --image=curlimages/curl --restart=Never -- \
   -H "Content-Type: application/json" \
   -d '{"input": "kubeingress"}'
 ```
+
+## Phase 2: Static Envoy Data Plane
+
+### 1. Deploy Envoy Proxy
+```bash
+# Create Envoy namespace
+kubectl apply -f deploy/envoy/static/namespace.yaml
+
+# Deploy ConfigMap, Deployment, and Service
+kubectl apply -f deploy/envoy/static/
+
+# Wait for Envoy to be ready
+kubectl rollout status deployment/envoy -n kubeingress-system
+```
+
+### 2. Configure Host DNS
+Add local domain aliases to your machine's `/etc/hosts`:
+```bash
+sudo sh -c 'echo "127.0.0.1 gallery.local enigma.local" >> /etc/hosts'
+```
+
+### 3. Verify Edge Ingress Traffic
+
+#### A. Test Gallery (Browser):
+Open your browser and visit:
+```text
+http://gallery.local
+```
+*(Refresh multiple times to watch the pod identity badge toggle between replicas)*
+
+#### B. Test Enigma (Terminal):
+```bash
+curl -X POST http://enigma.local \
+     -H "Content-Type: application/json" \
+     -d '{"input": "hello-kubeingress"}'
+```
+
+#### C. Inspect Envoy Admin Dashboard:
+```bash
+kubectl port-forward deployment/envoy -n kubeingress-system 9901:9901
+```
+Go to `http://localhost:9901` in your browser:
+* View discovered pod IPs: `http://localhost:9901/clusters`
+* View compiled Envoy configuration: `http://localhost:9901/config_dump`
+```
