@@ -4,9 +4,9 @@ metadata:
   name: enigma-service
   namespace: enigma
 spec:
-  type: ClusterIP
+  clusterIP: None
   ports:
-  - port: 80
+  - port: 8080
     targetPort: 8080
     protocol: TCP
     name: http
