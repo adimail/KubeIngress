@@ -1,0 +1,20 @@
+# Compiled binaries
+control-plane
+main
+*.exe
+bin/
+
+# Git & OS artifacts
+.git
+.gitignore
+.DS_Store
+
+# IDE & Editor configs
+.vscode
+.idea
+*.swp
+
+# Logs and coverage
+*.log
+*.out
+coverage.*

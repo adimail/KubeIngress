@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: kubeingress-system
+  labels:
+    app: control-plane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: control-plane
+  template:
+    metadata:
+      labels:
+        app: control-plane
+    spec:
+      containers:
+      - name: control-plane
+        image: control-plane:v1
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: DATABASE_URL
+          value: "postgres://postgres:postgres@postgres.kubeingress-system.svc.cluster.local:5432/kubeingress?sslmode=disable"
+        ports:
+        - name: grpc-xds
+          containerPort: 18000
