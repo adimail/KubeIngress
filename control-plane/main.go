@@ -23,14 +23,12 @@ func main() {
 		dbURL = "postgres://postgres:postgres@localhost:5432/kubeingress?sslmode=disable"
 	}
 
-	// 1. Initialize Database & Migrations
 	dbClient, err := db.NewClient(dbURL)
 	if err != nil {
 		log.Fatalf("Database connection failed: %v", err)
 	}
 	defer dbClient.Close()
 
-	// 2. Start xDS gRPC Server (port 18000)
 	xdsServer := server.New(dbClient)
 	go func() {
 		if err := xdsServer.Start(ctx, 18000); err != nil {
@@ -38,8 +36,7 @@ func main() {
 		}
 	}()
 
-	// 3. Start REST API Server (port 8080)
-	apiServer := api.NewServer(8080, dbClient)
+	apiServer := api.NewServer(8080, dbClient, xdsServer)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			log.Fatalf("API Server failed: %v", err)
