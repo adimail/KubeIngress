@@ -1,127 +1,81 @@
 # KubeIngress
-Cloud-Native Enterprise Ingress & Dynamic Control Plane
 
-KubeIngress is a cloud-native, multi-tenant ingress platform built with Envoy and Go, providing dynamic xDS-based service routing, edge authentication, distributed rate limiting, and zero-downtime configuration updates across Kubernetes workloads. The platform is designed around a custom control plane that continuously manages routing and security policies for a fleet of Envoy data-plane proxies.
+A cloud-native dynamic ingress controller and control plane for Kubernetes, built with Envoy, Go, PostgreSQL, and Angular.
 
+---
+
+## The Story Behind This Project
+
+I wanted to learn Kubernetes deeply by building something that engineering teams at top companies actually use.
+
+The spark for this project came from a video by Vasilios Syrakis about him getting laid off by Atlassian. Listening to discussions about internal infrastructure, platform teams, and how companies at that scale manage traffic led me down a rabbit hole into how Atlassian solves ingress and routing.
+
+That is where I learned about Atlassian Sovereign:
+* Atlassian Sovereign is an open-source, lightweight control plane written for Envoy proxy. Instead of hardcoding proxy configuration files on disk, Sovereign speaks Envoy’s xDS protocol over the network to push routing changes dynamically on the fly.
+
+---
+
+## What Does KubeIngress Do?
+
+In traditional setups (like classic NGINX Ingress), every time you add a new domain or change a routing rule:
+1. You have to edit a configuration file on disk.
+2. The proxy reloads its process (`nginx -s reload`).
+3. At high traffic volumes, reloading drops active connections and causes micro-outages.
+
+KubeIngress seperates the Data Plane from the Control Plane:
+
+* Envoy (The Data Plane): Sits at the edge of the Kubernetes cluster as the front door. It starts up with zero hardcoded routes.
+* Go Control Plane: A custom Go service that watches a PostgreSQL database where tenant routes are stored.
+* The gRPC Stream (xDS): Whenever a route is added or deleted in PostgreSQL, the Go service translates the database record into an Envoy Protobuf structure and streams it to Envoy over gRPC.
+* Zero Downtime: Envoy updates its memory tables instantly. No files are written to disk, no processes are restarted, and zero packets are dropped.
+
+---
+
+## How It Works
 
 ```
-[ Internet Traffic ]
-        │
-        ▼
-┌────────────────────────────────────────────────────────────────┐
-│ 1. DATA PLANE (Envoy Proxy Fleet in Kubernetes)                │
-│    - Terminates TLS / SSL (HTTPS)                              │
-│    - Validates JWT tokens at the edge                          │
-│    - Checks Redis for Rate Limits (e.g., 100 req/min/tenant)   │
-│    - Routes: acme.domain.com -> Acme Pods                      │
-│              stark.domain.com -> Stark Pods                    │
-└───────────────▲────────────────────────────────────────────────┘
-                │ Streams dynamic routes via gRPC (xDS API)
-                │ (Zero downtime, no proxy restarts)
-┌───────────────┴────────────────────────────────────────────────┐
-│ 2. CONTROL PLANE (Your Custom Go or Python Service)            │
-│    - Watches PostgreSQL for new tenants or routing rules       │
-│    - Translates database configs into Envoy-compatible xDS      │
-│    - Pushes live updates to the Data Plane instantly           │
-└───────────────▲────────────────────────────────────────────────┘
-                │
-┌───────────────┴────────────────────────────────────────────────┐
-│ 3. CLOUD & PLATFORM FOUNDATION (Terraform + Kubernetes)        │
-│    - AWS/GCP: VPCs, Subnets, Network Load Balancers (NLB)      │
-│    - Data: Redis (Rate limiting), Postgres (Tenant metadata)   │
-│    - Observability: Prometheus/Datadog metrics, p99 latencies  │
-└────────────────────────────────────────────────────────────────┘
+[ Browser / Internet Traffic ]
+              │
+              ▼
+┌────────────────────────────────────────────────────────┐
+│ Envoy Proxy Fleet (Data Plane)                         │
+│  - Listens on port 80                                  │
+│  - Routes traffic directly to backend Pods             │
+└───────────────▲────────────────────────────────────────┘
+                │ Streams dynamic routes via gRPC (xDS)
+                │ (Zero downtime, zero proxy restarts)
+┌───────────────┴────────────────────────────────────────┐
+│ Go Control Plane                                       │
+│  - Watches PostgreSQL for routing changes              │
+│  - Serves xDS on port 18000                            │
+│  - Exposes REST API on port 8080 for route management  │
+└───────▲────────────────────────────────────────┬───────┘
+        │ Reads / Writes                         │ Reverse-proxied
+        ▼                                        ▼
+┌──────────────────────────┐         ┌──────────────────────────┐
+│ PostgreSQL Database      │         │ Angular Web Console      │
+│  - Stores tenant domains │         │  - Real-time telemetry   │
+│  - Auto-migrated on boot │         │  - Live pod health       │
+└──────────────────────────┘         └──────────────────────────┘
 ```
 
-Here is a minimal, command-focused `README.md` for Phase 1:
+1. The Web Dashboard (`dashboard.local`):
+   A minimal Angular console where an operator can add or delete routing rules. It also displays live telemetry: connected Envoy nodes, xDS push latency, and real-time pod health (`2/2 Healthy`). The dashboard is "dogfooded"—it runs inside Kubernetes and is routed through Envoy itself.
 
-## Phase 1: Local Cluster & Tenant Workloads
+2. The Backend Workloads:
+   To prove multi-tenancy, the cluster hosts two distinct applications:
+   * `gallery.local`: An interactive image viewer that reads Kubernetes metadata using the Downward API to visually show requests load-balancing across pod replicas.
+   * `enigma.local`: A compute-heavy SHA-256 hashing and animal fingerprint API.
 
-### 1. Create Cluster
-```bash
-kind create cluster --name kubeingress --config deploy/kind/kind-cluster.yaml
-```
+3. Direct-to-Pod Networking (Headless Services):
+   Rather than routing through standard Kubernetes virtual IPs (`ClusterIP`), services are configured as Headless (`clusterIP: None`). This allows Envoy's DNS resolver to discover the actual underlying Pod IPs directly, enabling smart client-side load balancing and accurate pod health reporting.
 
-### 2. Build & Sideload Images
-```bash
-# Build
-docker build -t gallery:v1 ./apps/gallery
-docker build -t enigma:v1 ./apps/enigma
+---
 
-# Load into Kind
-kind load docker-image gallery:v1 --name kubeingress
-kind load docker-image enigma:v1 --name kubeingress
-```
+## What I Learned Building This
 
-### 3. Deploy Tenants
-```bash
-# Gallery
-kubectl apply -f deploy/tenants/gallery/namespace.yaml
-kubectl apply -f deploy/tenants/gallery/
-
-# Enigma
-kubectl apply -f deploy/tenants/enigma/namespace.yaml
-kubectl apply -f deploy/tenants/enigma/
-```
-
-### 4. Verify Workloads
-```bash
-# Check status
-kubectl get pods -n gallery
-kubectl get pods -n enigma
-
-# Test Gallery (HTML + Pod Identity)
-kubectl run test-pod --rm -it --image=curlimages/curl --restart=Never -- \
-  curl -s http://gallery-service.gallery.svc.cluster.local | grep -A 3 "identity-badge"
-
-# Test Enigma (POST Hash API)
-kubectl run test-pod --rm -it --image=curlimages/curl --restart=Never -- \
-  curl -s -X POST http://enigma-service.enigma.svc.cluster.local \
-  -H "Content-Type: application/json" \
-  -d '{"input": "kubeingress"}'
-```
-
-## Phase 2: Static Envoy Data Plane
-
-### 1. Deploy Envoy Proxy
-```bash
-# Create Envoy namespace
-kubectl apply -f deploy/envoy/static/namespace.yaml
-
-# Deploy ConfigMap, Deployment, and Service
-kubectl apply -f deploy/envoy/static/
-
-# Wait for Envoy to be ready
-kubectl rollout status deployment/envoy -n kubeingress-system
-```
-
-### 2. Configure Host DNS
-Add local domain aliases to your machine's `/etc/hosts`:
-```bash
-sudo sh -c 'echo "127.0.0.1 gallery.local enigma.local" >> /etc/hosts'
-```
-
-### 3. Verify Edge Ingress Traffic
-
-#### A. Test Gallery (Browser):
-Open your browser and visit:
-```text
-http://gallery.local
-```
-*(Refresh multiple times to watch the pod identity badge toggle between replicas)*
-
-#### B. Test Enigma (Terminal):
-```bash
-curl -X POST http://enigma.local \
-     -H "Content-Type: application/json" \
-     -d '{"input": "hello-kubeingress"}'
-```
-
-#### C. Inspect Envoy Admin Dashboard:
-```bash
-kubectl port-forward deployment/envoy -n kubeingress-system 9901:9901
-```
-Go to `http://localhost:9901` in your browser:
-* View discovered pod IPs: `http://localhost:9901/clusters`
-* View compiled Envoy configuration: `http://localhost:9901/config_dump`
-```
+* Kubernetes Networking Primitives: The difference between Virtual ClusterIPs, Headless Services, CoreDNS record resolution, and `hostPort` container bindings.
+* Envoy's xDS Architecture: How Listeners (LDS), Route Configurations (RDS), and Clusters (CDS) fit together in memory.
+* Systems Programming in Go: Streaming state machines over gRPC using `go-control-plane`, implementing connection callbacks, and managing concurrency.
+* Production Database Patterns: Running embedded, versioned SQL migrations using Go's `embed.FS` with PostgreSQL advisory locks instead of static initialization scripts.
+* Full-Stack Orchestration: Bridging an Angular frontend, an NGINX reverse-proxy, a Go backend, a PostgreSQL datastore, and an Envoy data plane into a cohesive system.
